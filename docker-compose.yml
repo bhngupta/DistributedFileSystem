@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: distributed_storage
+      POSTGRES_USER: storage_user
+      POSTGRES_PASSWORD: storage_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - storage_network
+
+  controller:
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://storage_user:storage_pass@postgres:5432/distributed_storage
+      - STORAGE_NODES_COUNT=3
+    depends_on:
+      - postgres
+    networks:
+      - storage_network
+
+  storage-node-1:
+    build:
+      context: .
+      dockerfile: storage_node/Dockerfile
+    environment:
+      - NODE_ID=1
+      - CONTROLLER_URL=http://controller:8000
+      - STORAGE_PATH=/data
+    volumes:
+      - storage_node_1:/data
+    networks:
+      - storage_network
+
+  storage-node-2:
+    build:
+      context: .
+      dockerfile: storage_node/Dockerfile
+    environment:
+      - NODE_ID=2
+      - CONTROLLER_URL=http://controller:8000
+      - STORAGE_PATH=/data
+    volumes:
+      - storage_node_2:/data
+    networks:
+      - storage_network
+
+  storage-node-3:
+    build:
+      context: .
+      dockerfile: storage_node/Dockerfile
+    environment:
+      - NODE_ID=3
+      - CONTROLLER_URL=http://controller:8000
+      - STORAGE_PATH=/data
+    volumes:
+      - storage_node_3:/data
+    networks:
+      - storage_network
+
+volumes:
+  postgres_data:
+  storage_node_1:
+  storage_node_2:
+  storage_node_3:
+
+networks:
+  storage_network:
+    driver: bridge
