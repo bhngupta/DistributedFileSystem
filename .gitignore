@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.flake8
+
+# Virtual Environment
+venv/
+.venv/
+
+# Environment Variables
+.env.local
+.env.production
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Storage directories
+/data/
+/storage/
+storage_*/
+
+# Temporary files
+tmp/
+temp/

@@ -1,248 +1,282 @@
+import asyncio
+import hashlib
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
-import os
-import asyncio
-import httpx
-import hashlib
-import logging
-from pathlib import Path
-import json
 
+# Basic logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Storage Node Agent", version="1.0.0")
+# Get configuration values - use sensible defaults for development
+my_node_id = os.getenv("NODE_ID", "node-001")
+controller_endpoint = os.getenv("CONTROLLER_URL", "http://localhost:8000")
+data_storage_path = Path(os.getenv("STORAGE_PATH", "/data"))
+port_number = int(os.getenv("NODE_PORT", "8001"))
+my_node_url = f"http://storage-node-{my_node_id}:{port_number}"
 
-# Configuration
-NODE_ID = os.getenv("NODE_ID", "node-1")
-CONTROLLER_URL = os.getenv("CONTROLLER_URL", "http://localhost:8000")
-STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/data"))
-NODE_PORT = int(os.getenv("NODE_PORT", "8001"))
-NODE_URL = f"http://storage-node-{NODE_ID}:{NODE_PORT}"
+# Make sure we have a place to store files (but handle testing gracefully)
+try:
+    data_storage_path.mkdir(parents=True, exist_ok=True)
+except (OSError, PermissionError):
+    # If we can't create the default path (like during testing), use a temp directory
+    import tempfile
 
-# Ensure storage directory exists
-STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp())
+    data_storage_path = temp_dir
+    print(
+        f"Warning: Using temporary storage path {data_storage_path} due to permission issues"
+    )
+
 
 class StorageAgent:
     def __init__(self):
-        self.storage_path = STORAGE_PATH
-        self.controller_url = CONTROLLER_URL
-        self.node_id = NODE_ID
-        self.node_url = NODE_URL
+        self.storage_dir = data_storage_path
+        self.controller_url = controller_endpoint
+        self.node_id = my_node_id
+        self.node_url = my_node_url
 
     async def register_with_controller(self):
-        """Register this node with the controller"""
+        """Try to register ourselves with the main controller"""
         try:
-            async with httpx.AsyncClient() as client:
-                registration_data = {
+            async with httpx.AsyncClient() as http_client:
+                node_info = {
                     "node_id": self.node_id,
                     "url": self.node_url,
-                    "capacity": self.get_storage_capacity()
+                    "capacity": self.calculate_storage_capacity(),
                 }
-                
-                response = await client.post(
+
+                resp = await http_client.post(
                     f"{self.controller_url}/nodes/register",
-                    json=registration_data,
-                    timeout=10.0
+                    json=node_info,
+                    timeout=10.0,
                 )
-                
-                if response.status_code == 200:
-                    logger.info(f"Successfully registered node {self.node_id} with controller")
+
+                if resp.status_code == 200:
+                    logger.info(f"Node {self.node_id} registered successfully!")
                     return True
                 else:
-                    logger.error(f"Failed to register with controller: {response.status_code}")
+                    logger.error(f"Registration failed: {resp.status_code}")
                     return False
-        except Exception as e:
-            logger.error(f"Error registering with controller: {str(e)}")
+        except Exception as ex:
+            logger.error(f"Couldn't register with controller: {str(ex)}")
             return False
 
-    def get_storage_capacity(self) -> int:
-        """Get storage capacity in bytes"""
+    def calculate_storage_capacity(self) -> int:
+        """Figure out how much storage space we have"""
         try:
-            # Get available disk space
-            statvfs = os.statvfs(self.storage_path)
-            return statvfs.f_frsize * statvfs.f_blocks
+            # Check disk space available
+            disk_stats = os.statvfs(self.storage_dir)
+            total_bytes = disk_stats.f_frsize * disk_stats.f_blocks
+            return total_bytes
         except Exception:
-            return 1024 * 1024 * 1024  # Default 1GB
+            # Fallback if we can't determine disk space
+            return 1024 * 1024 * 1024  # 1GB default
 
-    def get_used_space(self) -> int:
-        """Get used storage space in bytes"""
+    def calculate_used_space(self) -> int:
+        """Calculate how much space we're actually using"""
         try:
-            total_size = 0
-            for dirpath, dirnames, filenames in os.walk(self.storage_path):
-                for filename in filenames:
-                    filepath = os.path.join(dirpath, filename)
-                    total_size += os.path.getsize(filepath)
-            return total_size
+            total_used = 0
+            for root, dirs, files in os.walk(self.storage_dir):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    total_used += os.path.getsize(file_path)
+            return total_used
         except Exception:
             return 0
 
-    async def store_file(self, file_id: str, content: bytes) -> bool:
-        """Store file content locally"""
+    async def save_file_locally(self, file_id: str, file_content: bytes) -> bool:
+        """Save a file to our local storage"""
         try:
-            file_path = self.storage_path / file_id
-            
-            # Write file content
-            with open(file_path, 'wb') as f:
-                f.write(content)
-            
-            # Store metadata
-            metadata = {
+            target_file = self.storage_dir / file_id
+
+            # Write the actual file data
+            with open(target_file, "wb") as f:
+                f.write(file_content)
+
+            # Also save some metadata about it
+            file_metadata = {
                 "file_id": file_id,
-                "size": len(content),
-                "checksum": hashlib.sha256(content).hexdigest(),
-                "stored_at": file_path.as_posix()
+                "size": len(file_content),
+                "checksum": hashlib.sha256(file_content).hexdigest(),
+                "local_path": target_file.as_posix(),
             }
-            
-            metadata_path = self.storage_path / f"{file_id}.meta"
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f)
-            
-            logger.info(f"Stored file {file_id} ({len(content)} bytes)")
+
+            meta_file = self.storage_dir / f"{file_id}.meta"
+            with open(meta_file, "w") as f:
+                json.dump(file_metadata, f)
+
+            logger.info(f"Saved file {file_id} - {len(file_content)} bytes")
             return True
-            
-        except Exception as e:
-            logger.error(f"Error storing file {file_id}: {str(e)}")
+
+        except Exception as ex:
+            logger.error(f"Failed to store file {file_id}: {str(ex)}")
             return False
 
-    async def retrieve_file(self, file_id: str) -> bytes:
-        """Retrieve file content"""
+    async def load_file_locally(self, file_id: str) -> bytes:
+        """Load a file from our local storage"""
         try:
-            file_path = self.storage_path / file_id
-            
-            if not file_path.exists():
+            target_file = self.storage_dir / file_id
+
+            if not target_file.exists():
                 raise HTTPException(status_code=404, detail="File not found")
-            
-            with open(file_path, 'rb') as f:
-                content = f.read()
-            
-            logger.info(f"Retrieved file {file_id} ({len(content)} bytes)")
-            return content
-            
-        except Exception as e:
-            logger.error(f"Error retrieving file {file_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
 
-    async def delete_file(self, file_id: str) -> bool:
-        """Delete file from storage"""
+            with open(target_file, "rb") as f:
+                file_data = f.read()
+
+            logger.info(f"Loaded file {file_id} - {len(file_data)} bytes")
+            return file_data
+
+        except Exception as ex:
+            logger.error(f"Couldn't load file {file_id}: {str(ex)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error loading file: {str(ex)}"
+            )
+
+    async def remove_file_locally(self, file_id: str) -> bool:
+        """Remove a file from our local storage"""
         try:
-            file_path = self.storage_path / file_id
-            metadata_path = self.storage_path / f"{file_id}.meta"
-            
-            # Delete file and metadata
-            if file_path.exists():
-                file_path.unlink()
-            
-            if metadata_path.exists():
-                metadata_path.unlink()
-            
-            logger.info(f"Deleted file {file_id}")
+            target_file = self.storage_dir / file_id
+            meta_file = self.storage_dir / f"{file_id}.meta"
+
+            # Clean up both the file and its metadata
+            if target_file.exists():
+                target_file.unlink()
+
+            if meta_file.exists():
+                meta_file.unlink()
+
+            logger.info(f"Removed file {file_id} from storage")
             return True
-            
-        except Exception as e:
-            logger.error(f"Error deleting file {file_id}: {str(e)}")
+
+        except Exception as ex:
+            logger.error(f"Failed to remove file {file_id}: {str(ex)}")
             return False
 
-    async def list_files(self) -> list:
-        """List all stored files"""
+    async def get_file_list(self) -> list:
+        """Get a list of all files we have stored"""
         try:
-            files = []
-            for file_path in self.storage_path.glob("*.meta"):
+            stored_files = []
+            for meta_file in self.storage_dir.glob("*.meta"):
                 try:
-                    with open(file_path, 'r') as f:
-                        metadata = json.load(f)
-                    files.append(metadata)
-                except Exception as e:
-                    logger.error(f"Error reading metadata for {file_path}: {str(e)}")
-            
-            return files
-        except Exception as e:
-            logger.error(f"Error listing files: {str(e)}")
+                    with open(meta_file, "r") as f:
+                        file_info = json.load(f)
+                    stored_files.append(file_info)
+                except Exception as ex:
+                    logger.error(f"Couldn't read metadata from {meta_file}: {str(ex)}")
+
+            return stored_files
+        except Exception as ex:
+            logger.error(f"Error getting file list: {str(ex)}")
             return []
 
-# Initialize storage agent
+
+# Create our storage agent
 storage_agent = StorageAgent()
 
-@app.on_event("startup")
-async def startup_event():
-    """Register with controller on startup"""
-    logger.info(f"Starting Storage Node {NODE_ID}")
-    await asyncio.sleep(5)  # Wait for controller to be ready
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan events"""
+    # Startup
+    logger.info(f"Storage node {my_node_id} is starting up...")
+    await asyncio.sleep(5)  # Give the controller time to start
     await storage_agent.register_with_controller()
+    yield
+    # Shutdown (if needed)
+    logger.info(f"Storage node {my_node_id} is shutting down...")
+
+
+app = FastAPI(title="Storage Node Agent", version="1.0.0", lifespan=lifespan)
+
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+async def health_status():
+    """Simple health check"""
     return {
         "status": "healthy",
-        "node_id": NODE_ID,
-        "storage_path": str(STORAGE_PATH),
-        "used_space": storage_agent.get_used_space(),
-        "capacity": storage_agent.get_storage_capacity()
+        "node_id": my_node_id,
+        "storage_path": str(data_storage_path),
+        "used_space": storage_agent.calculate_used_space(),
+        "capacity": storage_agent.calculate_storage_capacity(),
     }
+
 
 @app.post("/store/{file_id}")
-async def store_file(file_id: str, request: Request):
-    """Store a file"""
+async def store_file_endpoint(file_id: str, request: Request):
+    """Endpoint to store a file on this node"""
     try:
-        content = await request.body()
-        success = await storage_agent.store_file(file_id, content)
-        
-        if success:
-            return {"status": "stored", "file_id": file_id, "size": len(content)}
+        file_content = await request.body()
+        store_success = await storage_agent.save_file_locally(file_id, file_content)
+
+        if store_success:
+            return {"status": "stored", "file_id": file_id, "size": len(file_content)}
         else:
-            raise HTTPException(status_code=500, detail="Failed to store file")
-    except Exception as e:
-        logger.error(f"Store endpoint error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Couldn't store the file")
+    except Exception as ex:
+        logger.error(f"Store operation failed: {str(ex)}")
+        raise HTTPException(status_code=500, detail=str(ex))
+
 
 @app.get("/retrieve/{file_id}")
-async def retrieve_file(file_id: str):
-    """Retrieve a file"""
+async def retrieve_file_endpoint(file_id: str):
+    """Endpoint to get a file from this node"""
     try:
-        content = await storage_agent.retrieve_file(file_id)
-        return Response(content=content, media_type="application/octet-stream")
+        file_content = await storage_agent.load_file_locally(file_id)
+        return Response(content=file_content, media_type="application/octet-stream")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Retrieve endpoint error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as ex:
+        logger.error(f"Retrieve operation failed: {str(ex)}")
+        raise HTTPException(status_code=500, detail=str(ex))
+
 
 @app.delete("/delete/{file_id}")
-async def delete_file(file_id: str):
-    """Delete a file"""
+async def delete_file_endpoint(file_id: str):
+    """Endpoint to delete a file from this node"""
     try:
-        success = await storage_agent.delete_file(file_id)
-        
-        if success:
+        delete_success = await storage_agent.remove_file_locally(file_id)
+
+        if delete_success:
             return {"status": "deleted", "file_id": file_id}
         else:
-            raise HTTPException(status_code=500, detail="Failed to delete file")
-    except Exception as e:
-        logger.error(f"Delete endpoint error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Couldn't delete the file")
+    except Exception as ex:
+        logger.error(f"Delete operation failed: {str(ex)}")
+        raise HTTPException(status_code=500, detail=str(ex))
+
 
 @app.get("/files")
-async def list_files():
-    """List all stored files"""
+async def list_files_endpoint():
+    """Get a list of all files stored on this node"""
     try:
-        files = await storage_agent.list_files()
-        return {"files": files, "count": len(files)}
-    except Exception as e:
-        logger.error(f"List files error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        file_list = await storage_agent.get_file_list()
+        return {"files": file_list, "count": len(file_list)}
+    except Exception as ex:
+        logger.error(f"File listing failed: {str(ex)}")
+        raise HTTPException(status_code=500, detail=str(ex))
+
 
 @app.get("/stats")
-async def get_stats():
-    """Get node statistics"""
+async def node_statistics():
+    """Get some stats about this storage node"""
     return {
-        "node_id": NODE_ID,
-        "capacity": storage_agent.get_storage_capacity(),
-        "used_space": storage_agent.get_used_space(),
-        "available_space": storage_agent.get_storage_capacity() - storage_agent.get_used_space(),
-        "files_count": len(await storage_agent.list_files())
+        "node_id": my_node_id,
+        "capacity": storage_agent.calculate_storage_capacity(),
+        "used_space": storage_agent.calculate_used_space(),
+        "available_space": storage_agent.calculate_storage_capacity()
+        - storage_agent.calculate_used_space(),
+        "files_count": len(await storage_agent.get_file_list()),
     }
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=NODE_PORT)
+
+    uvicorn.run(app, host="0.0.0.0", port=port_number)
