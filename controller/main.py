@@ -6,8 +6,11 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from accounting.models import NodeStorageUsage, StorageNode, get_accounting_db
 
 from .database import FileMetadata, StorageNode, get_db_session
 from .models import FileMetadataModel, StorageNodeModel
@@ -27,7 +30,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up the storage controller...")
     await node_svc.discover_nodes()
     yield
-    # Shutdown (if needed)
+    # Shutdown
     logger.info("Shutting down the storage controller...")
 
 
@@ -127,6 +130,29 @@ async def register_storage_node(node_info: dict):
 
     registration_result = await node_svc.register_node(node_id, node_url, node_capacity)
     return {"status": "registered", "node_id": node_id}
+
+
+@app.post("/metrics")
+async def receive_metrics(metrics: dict, db: Session = Depends(get_accounting_db)):
+    """Receive and store metrics in the database"""
+    try:
+        node_id = metrics.get("node_id")
+        node = db.query(StorageNode).filter(StorageNode.node_id == node_id).first()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node not found")
+
+        # Update node metrics
+        node.available_capacity = metrics["disk_usage"]["free"]
+        node.allocated_capacity = metrics["disk_usage"]["used"]
+        node.avg_response_time_ms = metrics.get(
+            "response_time_ms", node.avg_response_time_ms
+        )
+        node.last_health_check = metrics.get("timestamp", node.last_health_check)
+
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
