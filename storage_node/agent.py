@@ -69,15 +69,20 @@ class StorageAgent:
             return False
 
     def calculate_storage_capacity(self) -> int:
-        """Figure out how much storage space we have"""
+        """Figure out how much storage space we have - capped at 250MB for testing"""
         try:
-            # Check disk space available
+            # Cap storage capacity at 250MB for testing/development
+            max_capacity = 250 * 1024 * 1024  # 250MB in bytes
+
+            # Check actual disk space available
             disk_stats = os.statvfs(self.storage_dir)
-            total_bytes = disk_stats.f_frsize * disk_stats.f_blocks
-            return total_bytes
+            actual_bytes = disk_stats.f_frsize * disk_stats.f_blocks
+
+            # Return the smaller of actual capacity or our 250MB limit
+            return min(actual_bytes, max_capacity)
         except Exception:
-            # Fallback if we can't determine disk space
-            return 1024 * 1024 * 1024  # 1GB default
+            # Fallback - return 250MB default
+            return 250 * 1024 * 1024  # 250MB default
 
     def calculate_used_space(self) -> int:
         """Calculate how much space we're actually using"""

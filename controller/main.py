@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from accounting.models import NodeStorageUsage, StorageNode, get_accounting_db
 
 from .config_validation import get_config_service
-from .database import FileMetadata, StorageNode, get_db_session
+from .database import FileMetadata, StorageNode, get_db_session, init_database
 from .models import FileMetadataModel, StorageNodeModel
 from .services import FileService, NodeService
 
@@ -30,6 +30,9 @@ node_svc = NodeService()
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up the storage controller...")
+    logger.info("Initializing database...")
+    init_database()
+    logger.info("Database initialized successfully")
     await node_svc.discover_nodes()
     yield
     # Shutdown
