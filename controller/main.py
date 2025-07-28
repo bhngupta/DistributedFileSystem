@@ -6,12 +6,14 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import httpx
+import yaml
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from accounting.models import NodeStorageUsage, StorageNode, get_accounting_db
 
+from .config_validation import get_config_service
 from .database import FileMetadata, StorageNode, get_db_session
 from .models import FileMetadataModel, StorageNodeModel
 from .services import FileService, NodeService
@@ -153,6 +155,19 @@ async def receive_metrics(metrics: dict, db: Session = Depends(get_accounting_db
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/validate-config")
+async def validate_node_config(config_path: str):
+    """Endpoint to validate node configuration"""
+    service = get_config_service()
+    config = service.load_config(config_path)
+    service.validate_config(config, expected_quota=1000, expected_replication_factor=3)
+    alerts = service.get_alerts()
+
+    if alerts:
+        return {"status": "validation_failed", "alerts": alerts}
+    return {"status": "validation_success", "message": "All configurations are valid."}
 
 
 if __name__ == "__main__":

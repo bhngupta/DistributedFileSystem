@@ -6,7 +6,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://storage_user:storage_pass@localhost:5432/distributed_storage",
+    "postgresql://admin:admin@postgres_container:5432/dfs_test",
 )
 
 engine = create_engine(DATABASE_URL)
