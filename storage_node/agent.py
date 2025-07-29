@@ -26,7 +26,6 @@ my_node_url = f"http://storage-node-{my_node_id}:{port_number}"
 try:
     data_storage_path.mkdir(parents=True, exist_ok=True)
 except (OSError, PermissionError):
-    # If we can't create the default path (like during testing), use a temp directory
     import tempfile
 
     temp_dir = Path(tempfile.mkdtemp())
@@ -96,23 +95,9 @@ class StorageAgent:
             return False
 
     def calculate_storage_capacity(self) -> int:
-        """Figure out how much storage space we have - capped at 100MB for testing"""
-        try:
-            # TODO: Can we get this dynamically?
-            max_capacity = 100 * 1024 * 1024  # 100MB in bytes
-
-            # Check actual disk space available
-            disk_stats = os.statvfs(self.storage_dir)
-            actual_bytes = disk_stats.f_frsize * disk_stats.f_blocks
-
-            # Return the smaller of actual capacity or our 100MB limit
-            return min(actual_bytes, max_capacity)
-        except Exception:
-            # Fallback - return 100MB default
-            return 100 * 1024 * 1024  # 100MB default
+        return 100 * 1024 * 1024  # 100MB
 
     def calculate_used_space(self) -> int:
-        """Calculate how much space we're actually using"""
         try:
             total_used = 0
             for root, dirs, files in os.walk(self.storage_dir):
@@ -124,29 +109,20 @@ class StorageAgent:
             return 0
 
     async def save_file_locally(self, file_id: str, file_content: bytes) -> bool:
-        """Save a file to our local storage"""
         try:
             target_file = self.storage_dir / file_id
-
-            # Write the actual file data
             with open(target_file, "wb") as f:
                 f.write(file_content)
-
-            # Also save some metadata about it
             file_metadata = {
                 "file_id": file_id,
                 "size": len(file_content),
                 "checksum": hashlib.sha256(file_content).hexdigest(),
-                "local_path": target_file.as_posix(),
             }
-
             meta_file = self.storage_dir / f"{file_id}.meta"
             with open(meta_file, "w") as f:
                 json.dump(file_metadata, f)
-
             logger.info(f"Saved file {file_id} - {len(file_content)} bytes")
             return True
-
         except Exception as ex:
             logger.error(f"Failed to store file {file_id}: {str(ex)}")
             return False
@@ -172,27 +148,20 @@ class StorageAgent:
             )
 
     async def remove_file_locally(self, file_id: str) -> bool:
-        """Remove a file from our local storage"""
         try:
             target_file = self.storage_dir / file_id
             meta_file = self.storage_dir / f"{file_id}.meta"
-
-            # Clean up both the file and its metadata
             if target_file.exists():
                 target_file.unlink()
-
             if meta_file.exists():
                 meta_file.unlink()
-
-            logger.info(f"Removed file {file_id} from storage")
+            logger.info(f"Removed file {file_id}")
             return True
-
         except Exception as ex:
             logger.error(f"Failed to remove file {file_id}: {str(ex)}")
             return False
 
     async def get_file_list(self) -> list:
-        """Get a list of all files we have stored"""
         try:
             stored_files = []
             for meta_file in self.storage_dir.glob("*.meta"):
@@ -202,14 +171,12 @@ class StorageAgent:
                     stored_files.append(file_info)
                 except Exception as ex:
                     logger.error(f"Couldn't read metadata from {meta_file}: {str(ex)}")
-
             return stored_files
         except Exception as ex:
             logger.error(f"Error getting file list: {str(ex)}")
             return []
 
 
-# Create our storage agent
 storage_agent = StorageAgent()
 
 
@@ -235,9 +202,7 @@ async def heartbeat_loop():
     """Background task to send regular heartbeats"""
     while True:
         try:
-            await asyncio.sleep(
-                15
-            )  # Send heartbeat every 15 seconds for faster testing
+            await asyncio.sleep(15)  # 15 seconds for faster testing
             await storage_agent.send_heartbeat()
         except Exception as e:
             logger.error(f"Error in heartbeat loop: {str(e)}")

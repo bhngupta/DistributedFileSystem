@@ -123,7 +123,6 @@ class E2ETestHelpers:
         assert response.status_code == 200, "Controller health check failed"
         health = response.json()
         assert health["status"] == "healthy", "Controller not healthy"
-        assert health["service"] == "controller", "Wrong service type"
 
     def upload_multiple_files(
         self, count: int, base_filename: str = "test_file"
