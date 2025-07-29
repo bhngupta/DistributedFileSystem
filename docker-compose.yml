@@ -19,9 +19,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 250M
-        reservations:
           memory: 128M
+        reservations:
+          memory: 80M
 
   controller:
     build:
@@ -47,9 +47,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 250M
-        reservations:
           memory: 128M
+        reservations:
+          memory: 64M
 
   storage-node-1:
     build:
@@ -72,9 +72,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 250M
+          memory: 80M
         reservations:
-          memory: 128M
+          memory: 48M
 
   storage-node-2:
     build:
@@ -97,9 +97,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 250M
+          memory: 80M
         reservations:
-          memory: 128M
+          memory: 48M
 
 volumes:
   postgres_data:
@@ -107,19 +107,19 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=250m,uid=999,gid=999
+      o: size=100m,uid=999,gid=999
   storage_node_1:
     driver: local
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=250m,uid=1000,gid=1000
+      o: size=100m,uid=1000,gid=1000
   storage_node_2:
     driver: local
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=250m,uid=1000,gid=1000
+      o: size=100m,uid=1000,gid=1000
 
 networks:
   storage_network:

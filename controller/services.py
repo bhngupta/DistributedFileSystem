@@ -38,7 +38,7 @@ class FileService:
         successful_stores = []
         for node_info in target_nodes:
             try:
-                store_worked = await self._put_file_on_node(
+                store_worked = await self._store_file_on_node(
                     node_info["url"], file_id, content
                 )
                 if store_worked:
@@ -54,7 +54,7 @@ class FileService:
         # Record what we did in the database
         db_session = next(get_db_session())
         try:
-            # Save the file metadata
+            # Save the file metadata first
             file_record = FileMetadata(
                 file_id=file_id,
                 filename=filename,
@@ -62,6 +62,7 @@ class FileService:
                 checksum=file_hash,
             )
             db_session.add(file_record)
+            db_session.flush()  # Ensure file metadata is committed before adding locations
 
             # Record where we stored it
             for node_id in successful_stores:
@@ -69,6 +70,10 @@ class FileService:
                 db_session.add(location_record)
 
             db_session.commit()
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"Database error during file storage: {str(e)}")
+            raise
         finally:
             db_session.close()
 
@@ -112,14 +117,16 @@ class FileService:
                         .first()
                     )
 
-                    if node:
-                        content = await self._retrieve_file_from_node(node.url, file_id)
+                    if storage_node:
+                        content = await self._retrieve_file_from_node(
+                            storage_node.url, file_id
+                        )
                         if content:
                             return {
-                                "filename": file_metadata.filename,
+                                "filename": file_info.filename,
                                 "content": content,
-                                "size": file_metadata.size,
-                                "checksum": file_metadata.checksum,
+                                "size": file_info.size,
+                                "checksum": file_info.checksum,
                             }
                 except Exception as e:
                     logger.error(
@@ -129,7 +136,7 @@ class FileService:
 
             return None
         finally:
-            db.close()
+            db_session.close()
 
     async def delete_file(self, file_id: str) -> Dict:
         """Delete file from all storage nodes"""

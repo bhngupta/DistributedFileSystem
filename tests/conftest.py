@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 
+import psycopg2
 import pytest
 import requests
 from dotenv import load_dotenv
@@ -89,3 +90,37 @@ def controller_client():
     retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     client.mount("http://", HTTPAdapter(max_retries=retries))
     return client
+
+
+@pytest.fixture(scope="session")
+def db_connection():
+    """
+    PostgreSQL metadata DB connection.
+    """
+    connection = psycopg2.connect(
+        host="localhost",
+        port=5432,
+        database=os.getenv("POSTGRES_DB", "dfs_test"),
+        user=os.getenv("POSTGRES_USER", "admin"),
+        password=os.getenv("POSTGRES_PASSWORD", "admin"),
+    )
+
+    yield connection
+
+    # Cleanup
+    connection.close()
+
+
+@pytest.fixture
+def db_cursor(db_connection):
+    """
+    Get a database cursor for individual tests.
+    Creates a fresh cursor for each test and handles cleanup.
+    """
+    cursor = db_connection.cursor()
+
+    yield cursor
+
+    # Cleanup: close cursor after each test
+    cursor.close()
+    # Note: Don't commit here - let tests handle transactions
