@@ -126,6 +126,27 @@ async def remove_file(file_id: str):
         raise HTTPException(status_code=500, detail=f"Delete failed: {str(ex)}")
 
 
+@app.post("/nodes/heartbeat")
+async def node_heartbeat(heartbeat_data: dict):
+    """Receive heartbeat from storage nodes"""
+    node_id = heartbeat_data.get("node_id")
+    if not node_id:
+        raise HTTPException(status_code=400, detail="node_id required")
+
+    success = await node_svc.update_node_heartbeat(node_id)
+    if success:
+        return {"status": "heartbeat_received", "node_id": node_id}
+    else:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+
+@app.get("/nodes/health")
+async def get_nodes_health():
+    """Get overall health status of the storage cluster"""
+    health_status = await node_svc.check_node_health()
+    return health_status
+
+
 @app.post("/nodes/register")
 async def register_storage_node(node_info: dict):
     """Register a new storage node with the controller"""

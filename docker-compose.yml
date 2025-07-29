@@ -101,6 +101,31 @@ services:
         reservations:
           memory: 48M
 
+  storage-node-3:
+    build:
+      context: .
+      dockerfile: storage_node/Dockerfile
+    ports:
+      - "${STORAGE_NODE_3_PORT}:${STORAGE_NODE_3_PORT}"
+    environment:
+      - NODE_ID=3
+      - CONTROLLER_URL=http://${CONTROLLER_HOST}:${CONTROLLER_PORT}
+      - STORAGE_PATH=/data
+      - NODE_PORT=${STORAGE_NODE_3_PORT}
+    volumes:
+      - storage_node_3:/data
+    networks:
+      - storage_network
+    depends_on:
+      controller:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+        reservations:
+          memory: 48M
+
 volumes:
   postgres_data:
     driver: local
@@ -115,6 +140,12 @@ volumes:
       device: tmpfs
       o: size=100m,uid=1000,gid=1000
   storage_node_2:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=100m,uid=1000,gid=1000
+  storage_node_3:
     driver: local
     driver_opts:
       type: tmpfs

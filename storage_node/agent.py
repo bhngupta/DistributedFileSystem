@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -66,6 +67,32 @@ class StorageAgent:
                     return False
         except Exception as ex:
             logger.error(f"Couldn't register with controller: {str(ex)}")
+            return False
+
+    async def send_heartbeat(self):
+        """Send heartbeat to controller to indicate we're alive"""
+        try:
+            async with httpx.AsyncClient() as http_client:
+                heartbeat_data = {
+                    "node_id": self.node_id,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "status": "healthy",
+                }
+
+                resp = await http_client.post(
+                    f"{self.controller_url}/nodes/heartbeat",
+                    json=heartbeat_data,
+                    timeout=5.0,
+                )
+
+                if resp.status_code == 200:
+                    logger.debug(f"Heartbeat sent successfully for node {self.node_id}")
+                    return True
+                else:
+                    logger.warning(f"Heartbeat failed: {resp.status_code}")
+                    return False
+        except Exception as ex:
+            logger.warning(f"Couldn't send heartbeat: {str(ex)}")
             return False
 
     def calculate_storage_capacity(self) -> int:
@@ -193,9 +220,28 @@ async def lifespan(app: FastAPI):
     logger.info(f"Storage node {my_node_id} is starting up...")
     await asyncio.sleep(5)  # Give the controller time to start
     await storage_agent.register_with_controller()
+
+    # Start heartbeat task
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+
     yield
-    # Shutdown (if needed)
+
+    # Shutdown
     logger.info(f"Storage node {my_node_id} is shutting down...")
+    heartbeat_task.cancel()
+
+
+async def heartbeat_loop():
+    """Background task to send regular heartbeats"""
+    while True:
+        try:
+            await asyncio.sleep(
+                15
+            )  # Send heartbeat every 15 seconds for faster testing
+            await storage_agent.send_heartbeat()
+        except Exception as e:
+            logger.error(f"Error in heartbeat loop: {str(e)}")
+            await asyncio.sleep(30)  # Wait longer on error
 
 
 app = FastAPI(title="Storage Node Agent", version="1.0.0", lifespan=lifespan)

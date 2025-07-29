@@ -87,7 +87,13 @@ def controller_client():
     Returns a requests session for interacting with the controller API.
     """
     client = requests.Session()
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    # Reduce retries to avoid excessive 500 error accumulation
+    retries = Retry(
+        total=3,  # Reduced from 5
+        backoff_factor=0.5,  # Reduced from 1
+        status_forcelist=[502, 503, 504],  # Removed 500 from retry list
+        allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT", "DELETE"],
+    )
     client.mount("http://", HTTPAdapter(max_retries=retries))
     return client
 

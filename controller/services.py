@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import logging
-from datetime import datetime
+import os
+import subprocess
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import httpx
@@ -252,6 +254,10 @@ class FileService:
 
 
 class NodeService:
+    def __init__(self):
+        self.min_required_nodes = int(os.getenv("MIN_REQUIRED_NODES", "2"))
+        self.heartbeat_timeout = 30  # seconds
+
     async def get_active_nodes(self) -> List[Dict]:
         """Get list of active storage nodes"""
         db = next(get_db_session())
@@ -286,12 +292,14 @@ class NodeService:
                 existing_node.capacity = capacity
                 existing_node.is_active = True
                 existing_node.last_heartbeat = datetime.utcnow()
+                logger.info(f"Node {node_id} re-registered")
             else:
                 # Create new node
                 new_node = StorageNode(
                     node_id=node_id, url=url, capacity=capacity, is_active=True
                 )
                 db.add(new_node)
+                logger.info(f"New node {node_id} registered")
 
             db.commit()
             return True
@@ -302,8 +310,83 @@ class NodeService:
         finally:
             db.close()
 
+    async def check_node_health(self) -> Dict:
+        """Check health of all registered nodes and manage replacements"""
+        db = next(get_db_session())
+        try:
+            cutoff_time = datetime.utcnow() - timedelta(seconds=self.heartbeat_timeout)
+
+            # Find nodes that haven't sent heartbeat recently
+            stale_nodes = (
+                db.query(StorageNode)
+                .filter(
+                    StorageNode.is_active == True,
+                    StorageNode.last_heartbeat < cutoff_time,
+                )
+                .all()
+            )
+
+            # Mark stale nodes as inactive
+            for node in stale_nodes:
+                logger.warning(
+                    f"Node {node.node_id} marked as inactive due to missed heartbeat"
+                )
+                node.is_active = False
+
+            # Count active nodes
+            active_node_count = (
+                db.query(StorageNode).filter(StorageNode.is_active == True).count()
+            )
+
+            db.commit()
+
+            return {
+                "active_nodes": active_node_count,
+                "min_required": self.min_required_nodes,
+                "stale_nodes": [node.node_id for node in stale_nodes],
+                "replacement_needed": active_node_count < self.min_required_nodes,
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking node health: {str(e)}")
+            db.rollback()
+            return {"error": str(e)}
+        finally:
+            db.close()
+
+    async def update_node_heartbeat(self, node_id: str) -> bool:
+        """Update the heartbeat timestamp for a node"""
+        db = next(get_db_session())
+        try:
+            node = db.query(StorageNode).filter(StorageNode.node_id == node_id).first()
+            if node:
+                node.last_heartbeat = datetime.utcnow()
+                node.is_active = True
+                db.commit()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error updating heartbeat for node {node_id}: {str(e)}")
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
     async def discover_nodes(self):
         """Discover and register storage nodes"""
         # In a real implementation, this would discover nodes automatically
         # For now, nodes register themselves
         logger.info("Node discovery started - waiting for nodes to register")
+
+        # Start background heartbeat checking
+        asyncio.create_task(self._heartbeat_monitor())
+
+    async def _heartbeat_monitor(self):
+        """Background task to monitor node heartbeats"""
+        while True:
+            try:
+                await asyncio.sleep(15)  # Check every 15 seconds for faster testing
+                await self.check_node_health()
+            except Exception as e:
+                logger.error(f"Error in heartbeat monitor: {str(e)}")
+                await asyncio.sleep(30)  # Wait longer on error
