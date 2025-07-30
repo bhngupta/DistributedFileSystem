@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -64,6 +65,32 @@ class FileLocation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class NodeMetrics(Base):
+    __tablename__ = "node_metrics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    node_id = Column(String, index=True, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    # Storage metrics
+    total_storage_bytes = Column(BigInteger, default=0)
+    used_storage_bytes = Column(BigInteger, default=0)
+    available_storage_bytes = Column(BigInteger, default=0)
+    files_count = Column(Integer, default=0)
+
+    # Performance metrics
+    upload_ops_count = Column(Integer, default=0)
+    download_ops_count = Column(Integer, default=0)
+    delete_ops_count = Column(Integer, default=0)
+    avg_response_time_ms = Column(Float, default=0.0)
+
+    # Health metrics
+    is_healthy = Column(Boolean, default=True)
+    cpu_usage_percent = Column(Float, default=0.0)
+    memory_usage_percent = Column(Float, default=0.0)
+    last_heartbeat = Column(DateTime, default=datetime.utcnow)
+
+
 # trigger function and trigger for automatic updated_at updates
 update_timestamp_trigger = DDL(
     """
@@ -115,3 +142,18 @@ def get_db_session():
         yield db
     finally:
         db.close()
+
+
+class DatabaseSession:
+    """Context manager for database sessions"""
+
+    def __init__(self):
+        self.db = None
+
+    def __enter__(self):
+        self.db = SessionLocal()
+        return self.db
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.db:
+            self.db.close()

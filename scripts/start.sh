@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Distributed Storage System Startup Script
 
 echo "Starting Distributed File Storage System..."
@@ -30,21 +29,16 @@ check_service() {
 echo "Stopping existing containers..."
 docker-compose down
 
-echo "Starting PostgreSQL database..."
-docker-compose up -d postgres
+echo "Starting all Docker services..."
+docker-compose up -d
 
 check_service "PostgreSQL" 5432
-
-echo "Starting FastAPI controller..."
-docker-compose up -d controller
-
 check_service "Controller" 8000
+check_service "Grafana" 3000
 
-echo "Starting storage nodes..."
-docker-compose up -d storage-node-1 storage-node-2 storage-node-3
-
-echo "Waiting for storage nodes to register..."
-sleep 10
+# Ensure dashboard is properly loaded
+echo "Verifying Grafana dashboard configuration..."
+sleep 3  # Give Grafana a moment to initialize
 
 # Check system status
 echo ""
@@ -63,6 +57,7 @@ echo "Available endpoints:"
 echo "- Controller API: http://localhost:8000"
 echo "- API Documentation: http://localhost:8000/docs"
 echo "- Health Check: http://localhost:8000/health"
+echo "- Monitoring Dashboard: http://localhost:3000"
 echo ""
 echo "Example usage:"
 echo "  python client.py upload /path/to/file.txt"

@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -11,18 +12,15 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
-# Basic logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Get configuration values - use sensible defaults for development
 my_node_id = os.getenv("NODE_ID", "node-001")
 controller_endpoint = os.getenv("CONTROLLER_URL", "http://localhost:8000")
 data_storage_path = Path(os.getenv("STORAGE_PATH", "/data"))
 port_number = int(os.getenv("NODE_PORT", "8001"))
 my_node_url = f"http://storage-node-{my_node_id}:{port_number}"
 
-# Make sure we have a place to store files (but handle testing gracefully)
 try:
     data_storage_path.mkdir(parents=True, exist_ok=True)
 except (OSError, PermissionError):
@@ -41,6 +39,14 @@ class StorageAgent:
         self.controller_url = controller_endpoint
         self.node_id = my_node_id
         self.node_url = my_node_url
+
+        # Metrics tracking
+        self.metrics = {
+            "upload_ops_count": 0,
+            "download_ops_count": 0,
+            "delete_ops_count": 0,
+            "response_times": [],
+        }
 
     async def register_with_controller(self):
         """Try to register ourselves with the main controller"""
@@ -69,7 +75,7 @@ class StorageAgent:
             return False
 
     async def send_heartbeat(self):
-        """Send heartbeat to controller to indicate we're alive"""
+
         try:
             async with httpx.AsyncClient() as http_client:
                 heartbeat_data = {
@@ -176,6 +182,72 @@ class StorageAgent:
             logger.error(f"Error getting file list: {str(ex)}")
             return []
 
+    def record_operation(self, operation_type: str, response_time_ms: float = 0):
+
+        if operation_type == "upload":
+            self.metrics["upload_ops_count"] += 1
+        elif operation_type == "download":
+            self.metrics["download_ops_count"] += 1
+        elif operation_type == "delete":
+            self.metrics["delete_ops_count"] += 1
+
+        if response_time_ms > 0:
+            self.metrics["response_times"].append(response_time_ms)
+
+            # only last 100 response times
+            if len(self.metrics["response_times"]) > 100:
+                self.metrics["response_times"] = self.metrics["response_times"][-100:]
+
+    def get_current_metrics(self) -> dict:
+
+        import psutil
+
+        total_storage = self.calculate_storage_capacity()
+        used_storage = self.calculate_used_space()
+        available_storage = total_storage - used_storage
+        files_count = len(list(self.storage_dir.glob("*.meta")))
+
+        avg_response_time = 0.0
+        if self.metrics["response_times"]:
+            avg_response_time = sum(self.metrics["response_times"]) / len(
+                self.metrics["response_times"]
+            )
+
+        return {
+            "total_storage_bytes": total_storage,
+            "used_storage_bytes": used_storage,
+            "available_storage_bytes": available_storage,
+            "files_count": files_count,
+            "upload_ops_count": self.metrics["upload_ops_count"],
+            "download_ops_count": self.metrics["download_ops_count"],
+            "delete_ops_count": self.metrics["delete_ops_count"],
+            "avg_response_time_ms": avg_response_time,
+            "is_healthy": True,
+            "cpu_usage_percent": psutil.cpu_percent(),
+            "memory_usage_percent": psutil.virtual_memory().percent,
+        }
+
+    async def send_metrics_to_controller(self):
+
+        try:
+            metrics = self.get_current_metrics()
+            async with httpx.AsyncClient() as http_client:
+                resp = await http_client.post(
+                    f"{self.controller_url}/metrics/nodes/{self.node_id}",
+                    json=metrics,
+                    timeout=10.0,
+                )
+
+                if resp.status_code == 200:
+                    logger.debug(f"Metrics sent successfully for node {self.node_id}")
+                    return True
+                else:
+                    logger.warning(f"Failed to send metrics: {resp.status_code}")
+                    return False
+        except Exception as ex:
+            logger.warning(f"Couldn't send metrics: {str(ex)}")
+            return False
+
 
 storage_agent = StorageAgent()
 
@@ -199,11 +271,12 @@ async def lifespan(app: FastAPI):
 
 
 async def heartbeat_loop():
-    """Background task to send regular heartbeats"""
+    """Background task to send regular heartbeats and metrics"""
     while True:
         try:
-            await asyncio.sleep(15)  # 15 seconds for faster testing
+            await asyncio.sleep(15)  # 15 seconds
             await storage_agent.send_heartbeat()
+            await storage_agent.send_metrics_to_controller()  # Send metrics with heartbeat
         except Exception as e:
             logger.error(f"Error in heartbeat loop: {str(e)}")
             await asyncio.sleep(30)  # Wait longer on error
@@ -227,11 +300,14 @@ async def health_status():
 @app.post("/store/{file_id}")
 async def store_file_endpoint(file_id: str, request: Request):
     """Endpoint to store a file on this node"""
+    start_time = time.time()
     try:
         file_content = await request.body()
         store_success = await storage_agent.save_file_locally(file_id, file_content)
 
         if store_success:
+            response_time = (time.time() - start_time) * 1000  # Convert to ms
+            storage_agent.record_operation("upload", response_time)
             return {"status": "stored", "file_id": file_id, "size": len(file_content)}
         else:
             raise HTTPException(status_code=500, detail="Couldn't store the file")
@@ -243,8 +319,11 @@ async def store_file_endpoint(file_id: str, request: Request):
 @app.get("/retrieve/{file_id}")
 async def retrieve_file_endpoint(file_id: str):
     """Endpoint to get a file from this node"""
+    start_time = time.time()
     try:
         file_content = await storage_agent.load_file_locally(file_id)
+        response_time = (time.time() - start_time) * 1000  # Convert to ms
+        storage_agent.record_operation("download", response_time)
         return Response(content=file_content, media_type="application/octet-stream")
     except HTTPException:
         raise
@@ -256,10 +335,13 @@ async def retrieve_file_endpoint(file_id: str):
 @app.delete("/delete/{file_id}")
 async def delete_file_endpoint(file_id: str):
     """Endpoint to delete a file from this node"""
+    start_time = time.time()
     try:
         delete_success = await storage_agent.remove_file_locally(file_id)
 
         if delete_success:
+            response_time = (time.time() - start_time) * 1000  # Convert to ms
+            storage_agent.record_operation("delete", response_time)
             return {"status": "deleted", "file_id": file_id}
         else:
             raise HTTPException(status_code=500, detail="Couldn't delete the file")

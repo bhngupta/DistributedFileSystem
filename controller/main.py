@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from .database import init_database
+from .monitoring import MonitoringService
 from .services import FileService, NodeService
 
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 file_svc = FileService()
 node_svc = NodeService()
+monitoring_svc = MonitoringService()
 
 
 @asynccontextmanager
@@ -122,6 +124,29 @@ async def register_node(node_info: dict):
     node_capacity = node_info.get("capacity", 1024 * 1024 * 1024)
     await node_svc.register_node(node_id, node_url, node_capacity)
     return {"status": "registered", "node_id": node_id}
+
+
+@app.post("/metrics/nodes/{node_id}")
+async def receive_node_metrics(node_id: str, metrics: dict):
+    """Receive metrics from storage nodes"""
+    success = monitoring_svc.record_node_metrics(node_id, metrics)
+    if success:
+        return {"status": "recorded", "node_id": node_id}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to record metrics")
+
+
+@app.get("/metrics/nodes/{node_id}")
+async def get_node_metrics(node_id: str, hours: int = 24):
+    """Get historical metrics for a specific node"""
+    metrics = monitoring_svc.get_node_metrics_history(node_id, hours)
+    return {"node_id": node_id, "metrics": metrics}
+
+
+@app.get("/metrics/cluster")
+async def get_cluster_metrics():
+    """Get cluster-wide metrics overview"""
+    return monitoring_svc.get_cluster_overview()
 
 
 if __name__ == "__main__":

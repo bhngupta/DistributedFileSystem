@@ -125,6 +125,25 @@ services:
         reservations:
           memory: 48M
 
+  # Monitoring Stack
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/storage-dashboard.json
+      - ./monitoring/grafana-provisioning:/etc/grafana/provisioning
+    networks:
+      - storage_network
+    depends_on:
+      - db
+      - controller
+
 volumes:
   postgres_data:
     driver: local
@@ -150,6 +169,7 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: size=100m,uid=1000,gid=1000
+  grafana_data:
 
 networks:
   storage_network:
