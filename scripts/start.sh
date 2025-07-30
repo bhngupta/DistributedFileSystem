@@ -44,11 +44,11 @@ sleep 3  # Give Grafana a moment to initialize
 echo ""
 echo "=== System Status ==="
 echo "Checking controller health..."
-curl -s http://localhost:8000/health | python -m json.tool
+curl -s http://localhost:8000/health | python3 -m json.tool
 
 echo ""
 echo "Checking registered nodes..."
-curl -s http://localhost:8000/nodes | python -m json.tool
+curl -s http://localhost:8000/nodes | python3 -m json.tool
 
 echo ""
 echo "=== Distributed Storage System Started Successfully! ==="
@@ -60,8 +60,8 @@ echo "- Health Check: http://localhost:8000/health"
 echo "- Monitoring Dashboard: http://localhost:3000"
 echo ""
 echo "Example usage:"
-echo "  python client.py upload /path/to/file.txt"
-echo "  python client.py list"
-echo "  python client.py nodes"
+echo "  python3 client.py upload /path/to/file.txt"
+echo "  python3 client.py list"
+echo "  python3 client.py nodes"
 echo ""
 echo "To stop the system: docker-compose down"

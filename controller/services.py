@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import subprocess
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 

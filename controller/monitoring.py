@@ -1,18 +1,15 @@
 import logging
-import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from sqlalchemy.orm import Session
-
-from .database import DatabaseSession, NodeMetrics, get_db_session
+from .database import DatabaseSession, NodeMetrics
 
 logger = logging.getLogger(__name__)
 
 
 class MonitoringService:
     def __init__(self):
-        self.metrics_cache = {}
+        pass
 
     def record_node_metrics(self, node_id: str, metrics: Dict) -> bool:
         """Record metrics for a specific node"""
@@ -136,20 +133,3 @@ class MonitoringService:
         except Exception as e:
             logger.error(f"Failed to get cluster overview: {e}")
             return {"cluster_summary": {}, "nodes": {}}
-
-    def cleanup_old_metrics(self, days: int = 7) -> int:
-        """Clean up metrics older than specified days"""
-        try:
-            with get_db_session() as db:
-                cutoff = datetime.utcnow() - timedelta(days=days)
-                deleted = (
-                    db.query(NodeMetrics)
-                    .filter(NodeMetrics.timestamp < cutoff)
-                    .delete()
-                )
-                db.commit()
-                logger.info(f"Cleaned up {deleted} old metric records")
-                return deleted
-        except Exception as e:
-            logger.error(f"Failed to cleanup old metrics: {e}")
-            return 0

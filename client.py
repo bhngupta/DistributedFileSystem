@@ -24,7 +24,9 @@ class StorageClient:
 
         async with httpx.AsyncClient() as client:
             with open(file_path, "rb") as f:
-                files = {"file": (file_path.name, f, "application/octet-stream")}
+                files = {
+                    "uploaded_file": (file_path.name, f, "application/octet-stream")
+                }
                 response = await client.post(
                     f"{self.base_url}/files/upload", files=files
                 )
