@@ -22,7 +22,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://admin:admin@postgres_container:5432/dfs_test",
+    "postgresql://testuser:testpassword@db:5432/testdb",
 )
 
 engine = create_engine(DATABASE_URL)

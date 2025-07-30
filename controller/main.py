@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from .anomaly_detector import AnomalyDetector
 from .database import init_database
 from .monitoring import MonitoringService
 from .services import FileService, NodeService
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 file_svc = FileService()
 node_svc = NodeService()
 monitoring_svc = MonitoringService()
+anomaly_detector = AnomalyDetector()
 
 
 @asynccontextmanager
@@ -147,6 +149,22 @@ async def get_node_metrics(node_id: str, hours: int = 24):
 async def get_cluster_metrics():
     """Get cluster-wide metrics overview"""
     return monitoring_svc.get_cluster_overview()
+
+
+@app.get("/anomalies")
+async def get_anomalies():
+    """Fetch detected anomalies in the system"""
+    anomalies = anomaly_detector.detect_anomalies()
+    return {"anomalies": anomalies}
+
+
+@app.on_event("startup")
+@repeat_every(seconds=600)  # 10 minutes
+async def periodic_anomaly_detection():
+    """Run anomaly detection periodically every 10 minutes."""
+    anomalies = anomaly_detector.detect_anomalies()
+    if anomalies:
+        logger.warning(f"Detected anomalies: {anomalies}")
 
 
 if __name__ == "__main__":
